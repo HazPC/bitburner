@@ -19,6 +19,13 @@ const PRODUCT_DEVELOPMENT_PERCENTAGE = 10;
 export async function main(ns) {
 	ns.clearLog();
 	ns.tail();
+
+	let player = ns.getPlayer();
+	if (player.bitNodeN == 8) {
+		ns.print("Corporations are disabled in BN8");
+		return;
+	}
+
 	ns.disableLog("sleep");
 
 	/** @type {Corporation} */
@@ -61,6 +68,12 @@ export async function main(ns) {
 
 		await ns.sleep(5000);
 	}
+
+	//This code is pointless, there is no function to issue new shares
+	/*ns.print(`Time to sell: ${corp.getCorporation().shareSaleCooldown}`);
+	if (corp.getCorporation().shareSaleCooldown == 0) {
+		ns.print(`Offer: ${corp.getInvestmentOffer().funds}`);
+	}*/
 
 	//Used in wait time calculations
 	let profitMultiplier = 1;
@@ -351,6 +364,8 @@ export async function main(ns) {
 
 				if (researchDef.name == RESEARCH_DEFS.marketta2.name) {
 					await setPricing(industry, division);
+					//Might be in research mode so switch the staff back to production
+					await allocateStaff(division);
 				}
 				return true;
 			}
@@ -480,7 +495,7 @@ export async function main(ns) {
 		}
 	}
 
-	async function allocateStaff(division, oneCity = "") {
+	async function allocateStaff(division, oneCity = "", researchOnly = false) {
 		//ns.printf(`Allocate employee roles for ${division.name}`);
 		for (let city of division.cities) {
 			if (oneCity == "" || city == oneCity) {
@@ -510,11 +525,33 @@ export async function main(ns) {
 					];
 				}
 
-				let quotient = Math.floor(size / roles.length);
+				if (researchOnly) {
+					roles = [
+						JOBS.rnd
+					];
+				}
+
+				let quotient = Math.floor(size / roles.length) - (researchOnly ? 8 : 0);
 				let remainder = size % roles.length;
 				let allocation;
 
-				await corp.setAutoJobAssignment(division.name, city, JOBS.training, 0);//-office.employeeJobs[JOBS.training]);
+				if (office.employeeJobs[JOBS.training] > 0) {
+					await corp.setAutoJobAssignment(division.name, city, JOBS.training, 0);
+				}
+				if (researchOnly) {
+					if (office.employeeJobs[JOBS.rnd] > quotient) {
+						await corp.setAutoJobAssignment(division.name, city, JOBS.rnd, quotient);
+					}
+					await corp.setAutoJobAssignment(division.name, city, JOBS.ops, 2);
+					await corp.setAutoJobAssignment(division.name, city, JOBS.eng, 2);
+					await corp.setAutoJobAssignment(division.name, city, JOBS.man, 2);
+					await corp.setAutoJobAssignment(division.name, city, JOBS.bus, 2);
+				}
+				else {
+					if (office.employeeJobs[JOBS.rnd] > quotient) {
+						await corp.setAutoJobAssignment(division.name, city, JOBS.rnd, quotient);
+					}
+				}
 
 				for (let role of roles) {
 					let current = office.employeeJobs[role];
@@ -624,24 +661,26 @@ export async function main(ns) {
 	async function buyCheapUpgrades(seconds = 1) {
 		let upgrades = UPGRADES;
 		let limit = Math.floor((corp.getCorporation().revenue - corp.getCorporation().expenses) * profitMultiplier * seconds);
-		ns.print(`Buy any upgrades costing less than ${formatExpo(limit)}`);
+		if (limit > 0) {
+			ns.print(`Buy any upgrades costing less than ${formatExpo(limit)}`);
 
-		for (let upgrade of upgrades) {
-			let cost = corp.getUpgradeLevelCost(upgrade.name);
-			if (cost < limit) {
-				do {
-					await awaitFunds(`Awaiting funds to buy upgrade ${upgrade.name}`, cost);
-					/*let funds = corp.getCorporation().funds;
-					while (funds < cost) {
-						ns.printf(`Awaiting funds to buy upgrade ${upgrade}` +
-							` (${parseInt(funds)}/${cost})`);
-						await ns.sleep(TICK);
-						funds = corp.getCorporation().funds;
-					}*/
-					corp.levelUpgrade(upgrade.name);
-					upgrade.level++;
-					cost = corp.getUpgradeLevelCost(upgrade.name);
-				} while (cost < limit);
+			for (let upgrade of upgrades) {
+				let cost = corp.getUpgradeLevelCost(upgrade.name);
+				if (cost < limit) {
+					do {
+						await awaitFunds(`Awaiting funds to buy upgrade ${upgrade.name}`, cost);
+						/*let funds = corp.getCorporation().funds;
+						while (funds < cost) {
+							ns.printf(`Awaiting funds to buy upgrade ${upgrade}` +
+								` (${parseInt(funds)}/${cost})`);
+							await ns.sleep(TICK);
+							funds = corp.getCorporation().funds;
+						}*/
+						corp.levelUpgrade(upgrade.name);
+						upgrade.level++;
+						cost = corp.getUpgradeLevelCost(upgrade.name);
+					} while (cost < limit);
+				}
 			}
 		}
 	}
@@ -773,7 +812,7 @@ export async function main(ns) {
 		await expandDivision(industry, division);
 		await expandOffice(industry, division, targetOfficeSize);
 		await recruit(industry, division, targetOfficeSize);
-		await allocateStaff(division);
+		await allocateStaff(division, "", targetOfficeSize >= 60 && targetOfficeSize <= 90 && !corp.hasResearched(division.name, RESEARCH_DEFS.marketta2.name));
 		await expandWarehouse(industry, division, targetWarehouseLevel);
 		await setPricing(industry, division);
 		await buyMaterials(industry, division);
@@ -879,6 +918,8 @@ export async function main(ns) {
 					let minorPhase = Math.floor((industry.adverts - 10) / 10) / 10;
 					//ns.print(`Minor phase: ${minorPhase}`)
 					industry.phase = PHASES.growth2 + minorPhase;
+
+					//await allocateStaff(division, "", minOfficeSize >= 60 && minOfficeSize <= 90 && !corp.hasResearched(division.name, RESEARCH_DEFS.marketta2.name));
 
 					await buyCheapAdverts(division);
 				}
@@ -1066,20 +1107,17 @@ export async function main(ns) {
 						ns.printf(`Waiting for 210b investment offer. Current offer ${formatExpo(offer)}`);
 						await ns.sleep(5000);
 						offer = corp.getInvestmentOffer().funds;
-						/*n++;
-						if (n == 5) {
-							amount = 250e9;
-						}
-						else if (n == 10) {
-							amount = 210e9;
-						}*/
-					} while (offer < amount);
+						n++;
+					} while (offer < amount && n < 10);
 				}
-				corp.acceptInvestmentOffer();
-				ns.printf(`Accepted investment. New funds ${formatExpo(corp.getCorporation().funds)}`);
 
-				//If someone turned this off at the top because they haven't beaten 3.3, it should unlock here
-				await buyUnlock(UNLOCK_DEFS.smartSupply);
+				if (offer > amount) {
+					corp.acceptInvestmentOffer();
+					ns.printf(`Accepted investment. New funds ${formatExpo(corp.getCorporation().funds)}`);
+
+					//If someone turned this off at the top because they haven't beaten 3.3, it should unlocked here
+					await buyUnlock(UNLOCK_DEFS.smartSupply);
+				}
 			}
 		}
 		else if (funds < 1e12 && (industry.officeStats.minOfficeSize < 9 ||
@@ -1157,7 +1195,7 @@ export async function main(ns) {
 			ns.printf(`Buy 20 of each tier 1 and 2 upgrades`);
 			await buyUpgrades(UPGRADES.filter(upgrade => upgrade.tier === 1 || upgrade.tier === 2), 20);
 		}
-		else if (corpPhase == 3 && corp.getInvestmentOffer().funds > 800e12) {
+		else if (corpPhase == 3) {// && corp.getInvestmentOffer().funds > 800e12) {
 			//Get a final investment and go public
 			if (!corp.getCorporation().public) {
 				/*if (corp.getCorporation().numShares == 0.55e9) {
@@ -1178,6 +1216,7 @@ export async function main(ns) {
 
 				if (corp.goPublic(0)) {
 					ns.printf(`${corp.getCorporation().name} is now public!`);
+
 				}
 				else {
 					ns.printf(`${corp.getCorporation().name} could not go public`);
@@ -1209,7 +1248,23 @@ export async function main(ns) {
 				targetAdverts += 10;
 			}
 
-			await upgradeDivision(industry, targetOfficeSize, targetWarehouseLevel, targetAdverts);
+			if (activeDivision < 5 && !corp.hasResearched(industry.divisionName, RESEARCH_DEFS.marketta2.name)) {
+				let r1 = corp.getDivision(industry.divisionName).research;
+				ns.print(`${industry.divisionName} is in research mode until ${RESEARCH_DEFS.marketta2.name} is unlocked`);
+				await ns.sleep(10000);
+				let r2 = corp.getDivision(industry.divisionName).research;
+				let rr = (r2 - r1) / 10;
+				let req = (!corp.hasResearched(industry.divisionName, RESEARCH_DEFS.marketta2.name) ? 50000 : 0) +
+					(!corp.hasResearched(industry.divisionName, RESEARCH_DEFS.marketta1.name) ? 20000 : 0) +
+					(!corp.hasResearched(industry.divisionName, RESEARCH_DEFS.overclock.name) ? 15000 : 0) +
+					(!corp.hasResearched(industry.divisionName, RESEARCH_DEFS.rnd.name) ? 5000 : 0);
+
+				ns.print(`${formatExpo(r2)}/${formatExpo(req)} = ${formatExpo(req - r2)} to go ~${Math.floor(req / rr)} seconds at ${rr.toFixed(1)}/s `);
+				await ns.sleep(10000);
+			}
+			else {
+				await upgradeDivision(industry, targetOfficeSize, targetWarehouseLevel, targetAdverts);
+			}
 
 			await buyCheapUpgrades(10);
 		}
