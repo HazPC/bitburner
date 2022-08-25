@@ -1349,7 +1349,7 @@ export async function main(ns) {
 			await buyCheapUpgrades(5);
 		}
 
-		if (ns.getOwnedSourceFiles().filter(sf => sf.n === 4)) {
+		if (ns.singularity.getOwnedSourceFiles().filter(sf => sf.n === 4)) {
 			//We have access to Singularity API so we can buy faction rep
 			if (corp.getCorporation().funds > 1e30) {
 				let player = ns.getPlayer();
@@ -1366,7 +1366,7 @@ export async function main(ns) {
 					if (rep < maxRepReq) {
 						await awaitFunds(`Awaiting funds to bribe ${faction}`, (maxRepReq - rep) * 1e9);
 						ns.print(`Bribing ${faction}`);
-						corp.bribe(faction, (maxRepReq - rep) * 1e9, 0);
+						corp.bribe(faction, (maxRepReq - rep) * 1e9);
 					}
 				}
 			}
